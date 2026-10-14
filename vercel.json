@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "npm --prefix passenger-app ci",
-  "buildCommand": "npm --prefix passenger-app run build",
+  "installCommand": "cd passenger-app && npm ci",
+  "buildCommand": "cd passenger-app && npm run build",
   "outputDirectory": "passenger-app/dist",
   "rewrites": [
     {
