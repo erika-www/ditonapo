@@ -1,0 +1,4 @@
+stop_code,stop_name,address,latitude,longitude
+STOP_IMP_201,Kamuning MRT Station Stop,EDSA cor Kamuning Rd,14.6335,121.0425
+STOP_IMP_202,Cubao Farmers Market Bus Bay,EDSA cor Aurora Blvd,14.6195,121.0515
+STOP_IMP_203,Project 4 JP Rizal Terminal,JP Rizal St, Project 4,14.6240,121.0690

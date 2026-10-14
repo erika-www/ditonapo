@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: dito_na_po_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: dito_na_po
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  backend:
+    build: ./backend
+    container_name: dito_na_po_backend
+    restart: always
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/dito_na_po
+      SECRET_KEY: dito_na_po_super_secret_jwt_key_qc_bus_2026_dev_only
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+
+volumes:
+  postgres_data:
