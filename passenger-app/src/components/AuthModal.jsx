@@ -20,7 +20,9 @@ export function AuthModal({ isOpen, onClose, onLoginSuccess, onLoginFailure }) {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [category, setCategory] = useState('Regular');
+  const [error, setError] = useState('');
   const setErrorMsg = (message) => {
+    setError(message || '');
     if (message && tab === 'login') onLoginFailure?.(message);
   };
   const [isLoading, setIsLoading] = useState(false);
@@ -116,6 +118,8 @@ export function AuthModal({ isOpen, onClose, onLoginSuccess, onLoginFailure }) {
             Access exclusive QC Bus information by logging in or signing up here
           </p>
         </div>
+
+        {error && <div role="alert" className="alert alert-danger" style={{ marginBottom: '1rem' }}>{error}</div>}
 
         {/* Social Authentication Buttons (Supabase Facebook & Google) */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', marginBottom: '1.25rem' }}>

@@ -31,46 +31,19 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
  */
 export async function loginAdmin(email, password) {
   try {
-    let { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error && (error.message?.includes('Invalid login credentials') || error.message?.includes('User not found') || error.message?.includes('credentials'))) {
-      const signup = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            full_name: email.split('@')[0],
-            role: 'admin'
-          }
-        }
-      });
-      if (signup.data?.user) {
-        data = signup.data;
-        error = null;
-      }
-    }
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
 
-    // Fetch and check profile role from profiles table
-    let { data: profile } = await supabase
+    const { data: profile, error: profileError } = await supabase
       .from('profiles')
       .select('*')
       .eq('id', data.user.id)
       .maybeSingle();
 
-    if (!profile) {
-      const fallbackProfile = {
-        id: data.user.id,
-        email: data.user.email,
-        full_name: data.user.user_metadata?.full_name || email.split('@')[0],
-        role: 'admin',
-        is_active: true
-      };
-      await supabase.from('profiles').upsert(fallbackProfile);
-      profile = fallbackProfile;
-    } else if (profile.role !== 'admin' || !profile.is_active) {
-      await supabase.from('profiles').update({ role: 'admin', is_active: true }).eq('id', data.user.id);
-      profile.role = 'admin';
-      profile.is_active = true;
+    if (profileError) throw profileError;
+    if (!profile || profile.role !== 'admin' || !profile.is_active) {
+      await supabase.auth.signOut();
+      throw new Error('This account is not approved for administrator access.');
     }
 
     return { success: true, user: data.user, profile };
@@ -794,12 +767,80 @@ export async function fetchOngoingTripForBus(plateNumber) {
   }
 }
 
-export async function createManualPassengerJourney({ passengerName, origin, destination, tripId }) {
+export async function fetchCurrentBusLocation(busId) {
+  try {
+    const { data, error } = await supabase.from('bus_current_location')
+      .select('*').eq('bus_id', busId).maybeSingle();
+    if (error) throw error;
+    return { success: true, data };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+export function subscribeToBusLocation(busId, onUpdate, onStatus) {
+  const channel = supabase.channel(`admin_bus_location_${busId}`)
+    .on('postgres_changes', {
+      event: '*', schema: 'public', table: 'bus_current_location', filter: `bus_id=eq.${busId}`
+    }, (payload) => {
+      if (payload.new) onUpdate(payload.new);
+    })
+    .subscribe((status) => onStatus?.(status));
+
+  return () => supabase.removeChannel(channel);
+}
+
+export async function sendBusDirectionCommand(busId, direction) {
+  if (!busId || !['Northbound', 'Southbound'].includes(direction)) {
+    return { success: false, error: 'A bus and valid direction are required.' };
+  }
+  try {
+    const { data, error } = await supabase.functions.invoke('bus-direction', {
+      body: { bus_id: busId, direction }
+    });
+    if (error) throw error;
+    if (!data?.success) throw new Error(data?.error || 'Direction command was not accepted.');
+    return { success: true, data };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+export async function publishCurrentBusLocation(busId, position) {
+  try {
+    const latitude = Number(position.latitude);
+    const longitude = Number(position.longitude);
+    if (!busId || !Number.isFinite(latitude) || latitude < -90 || latitude > 90
+      || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+      throw new Error('A valid bus and GPS position are required to publish live location.');
+    }
+
+    const speed = position.speed == null ? null : Number(position.speed);
+    const heading = position.heading == null ? null : Number(position.heading);
+    const accuracy = position.accuracy == null ? null : Number(position.accuracy);
+    const { error } = await supabase.from('bus_current_location').upsert({
+      bus_id: busId,
+      latitude,
+      longitude,
+      speed: Number.isFinite(speed) && speed >= 0 ? speed : null,
+      heading: Number.isFinite(heading) && heading >= 0 && heading <= 360 ? heading : null,
+      accuracy: Number.isFinite(accuracy) && accuracy >= 0 ? accuracy : null,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'bus_id' });
+    if (error) throw error;
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+export async function createManualPassengerJourney({ passengerName, passengerCategory, origin, destination, tripId }) {
   try {
     const { data, error } = await supabase
       .from('passenger_journeys')
       .insert({
         passenger_name: passengerName.trim(),
+        passenger_category: passengerCategory,
         registration_source: 'admin',
         origin_name: origin,
         destination_name: destination,

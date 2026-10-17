@@ -348,19 +348,28 @@ export function StartTripInterface({
   useEffect(() => {
     if (activeTab !== 'tracking' || !routeBusTrip?.id || !routeBusTrip?.bus_id) return undefined;
     let mounted = true;
-    fetchCurrentBusLocation(routeBusTrip.bus_id).then((result) => {
-      if (mounted && result.success && result.data) setLiveBusCoords({
-        lat: result.data.latitude, lng: result.data.longitude,
-        speed: result.data.speed, updated_at: result.data.updated_at
+    const applyBusLocation = (location) => {
+      const updatedAt = Date.parse(location.updated_at);
+      const secondsAgo = Number.isFinite(updatedAt)
+        ? Math.max(0, Math.floor((Date.now() - updatedAt) / 1000))
+        : 0;
+      setLiveBusCoords({
+        lat: location.latitude, lng: location.longitude,
+        speed: location.speed, updated_at: location.updated_at
       });
+      setLastUpdatedSecondsAgo(secondsAgo);
+      setIsSignalLost(secondsAgo > 60);
+    };
+
+    setLiveBusCoords(null);
+    fetchCurrentBusLocation(routeBusTrip.bus_id).then((result) => {
+      if (mounted && result.success && result.data) applyBusLocation(result.data);
     });
     fetchTripOccupancy(routeBusTrip.id).then((result) => {
       if (mounted && result.success && result.data) setOccupancy(result.data);
     });
     const unsubscribeLocation = subscribeToBusLocation(routeBusTrip.bus_id, (location) => {
-      setLiveBusCoords({ lat: location.latitude, lng: location.longitude, speed: location.speed, updated_at: location.updated_at });
-      setLastUpdatedSecondsAgo(0);
-      setIsSignalLost(false);
+      applyBusLocation(location);
     });
     const unsubscribeOccupancy = subscribeToTripOccupancy(routeBusTrip.id, setOccupancy);
     return () => {
@@ -896,56 +905,10 @@ export function StartTripInterface({
       </div>
     )}
 
-      {/* TAB: PASSENGER DASHBOARD (Ridership Trends & Analysis) */}
+      {/* TAB: PASSENGER DASHBOARD */}
       {activeTab === 'dashboard' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          {/* Header Banner */}
-          <div className="glass-card" style={{
-            background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(6, 182, 212, 0.12))',
-            border: '1px solid rgba(139, 92, 246, 0.35)',
-            position: 'relative',
-            overflow: 'hidden'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem' }}>
-                  <span className="badge badge-success" style={{ fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
-                    <Sparkles size={13} /> QC Free Transit Subsidy Active
-                  </span>
-                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Route 4 Arterial Corridor</span>
-                </div>
-                <h1 style={{ fontSize: '1.65rem', margin: '0 0 0.35rem 0', fontFamily: 'var(--font-heading)' }}>
-                  Passenger Ridership Dashboard
-                </h1>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.92rem', margin: 0, maxWidth: '650px' }}>
-                  Welcome back, <strong>{currentUser?.name || 'Quezon City Commuter'}</strong>. Here is your personalized ridership summary, free fare savings, and Route 4 commute pattern analysis.
-                </p>
-              </div>
-
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('home')}
-                  className="btn-primary"
-                  style={{ fontSize: '0.85rem', padding: '0.5rem 1rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
-                >
-                  <Home size={15} /> Book Route 4 Trip
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('tracking')}
-                  className="btn-secondary"
-                  style={{ fontSize: '0.85rem', padding: '0.5rem 1rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
-                >
-                  <Navigation size={15} /> Live Bus Map
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* 4 Stat Metric Cards */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '1rem' }}>
-            {/* Card 1: Total Trips */}
             <div className="glass-card" style={{ padding: '1.25rem', borderLeft: '4px solid #8b5cf6' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                 <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)', fontWeight: 700 }}>TOTAL COMMUTES</span>
@@ -954,58 +917,7 @@ export function StartTripInterface({
                 </div>
               </div>
               <div style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '0.2rem' }}>
-                {Math.max(visibleTripHistory.length, 14)} Trips
-              </div>
-              <div style={{ fontSize: '0.75rem', color: '#10b981', display: 'flex', alignItems: 'center', gap: '0.25rem', fontWeight: 600 }}>
-                <TrendingUp size={13} /> +4 trips this month on Route 4
-              </div>
-            </div>
-
-            {/* Card 2: Cumulative Fare Savings */}
-            <div className="glass-card" style={{ padding: '1.25rem', borderLeft: '4px solid #10b981' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)', fontWeight: 700 }}>FREE FARE SAVINGS</span>
-                <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'rgba(16, 185, 129, 0.15)', display: 'grid', placeItems: 'center', color: '#10b981' }}>
-                  <DollarSign size={18} />
-                </div>
-              </div>
-              <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#10b981', marginBottom: '0.2rem' }}>
-                ₱{(Math.max(visibleTripHistory.length, 14) * 35).toLocaleString()}.00
-              </div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                100% QC LGU Subsidized Fare
-              </div>
-            </div>
-
-            {/* Card 3: Kilometers Traveled */}
-            <div className="glass-card" style={{ padding: '1.25rem', borderLeft: '4px solid #06b6d4' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)', fontWeight: 700 }}>CORRIDOR DISTANCE</span>
-                <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'rgba(6, 182, 212, 0.15)', display: 'grid', placeItems: 'center', color: '#06b6d4' }}>
-                  <MapPin size={18} />
-                </div>
-              </div>
-              <div style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '0.2rem' }}>
-                ~{(Math.max(visibleTripHistory.length, 14) * 9.8).toFixed(1)} km
-              </div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                Traversed along 15 Route 4 Stops
-              </div>
-            </div>
-
-            {/* Card 4: Carbon Footprint Reduced */}
-            <div className="glass-card" style={{ padding: '1.25rem', borderLeft: '4px solid #eab308' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)', fontWeight: 700 }}>CO₂ REDUCTION</span>
-                <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'rgba(234, 179, 8, 0.15)', display: 'grid', placeItems: 'center', color: '#eab308' }}>
-                  <Leaf size={18} />
-                </div>
-              </div>
-              <div style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '0.2rem' }}>
-                ~{(Math.max(visibleTripHistory.length, 14) * 1.42).toFixed(1)} kg
-              </div>
-              <div style={{ fontSize: '0.75rem', color: '#10b981', fontWeight: 600 }}>
-                Green Urban Transport Advocate
+                {visibleTripHistory.length} Trips
               </div>
             </div>
           </div>

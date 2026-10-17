@@ -72,7 +72,7 @@ export function App() {
       <Router>
         <Routes>
           <Route path="/login" element={<LoginRoute page={<LoginPage />} />} />
-          <Route path="/admin-login" element={<LoginRoute page={<AdminLoginPage />} />} />
+          <Route path="/admin-login" element={<AdminLoginPage />} />
           <Route path="/personnel-request" element={<PersonnelRequestPage />} />
           <Route path="/admin/*" element={<ProtectedRoute redirectTo="/admin-login"><AdminPortal /></ProtectedRoute>} />
           <Route path="/*" element={<DutyPortal />} />

@@ -57,15 +57,7 @@ export function Sidebar({ adminMode = false }) {
             <NavLink to="/login" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`}>
               <Navigation size={18} /> Bus Duty Check-in
             </NavLink>
-          </> : <>
-            <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 800, padding: '0.5rem 0.75rem 0.25rem 0.75rem', textTransform: 'uppercase' }}>Duty Operations</div>
-            <NavLink to="/login" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`}>
-              <UserRoundPlus size={18} /> Register Bus Duty
-            </NavLink>
-            <NavLink to="/admin" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`}>
-              <ShieldCheck size={18} /> Admin Exclusive Portal
-            </NavLink>
-          </>}
+          </> : null}
 
           {!adminMode && isDutyRegistered && <>
             <NavLink to="/" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`} end>

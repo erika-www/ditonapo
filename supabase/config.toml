@@ -49,6 +49,10 @@ port = 54329
 # Specifies when a server connection can be reused by other clients.
 # Configure one of the supported pooler modes: `transaction`, `session`.
 pool_mode = "transaction"
+
+[functions.bus-direction]
+verify_jwt = false
+
 # How many server connections to allow per user/database pair.
 default_pool_size = 20
 # Maximum number of client connections allowed.
@@ -162,6 +166,7 @@ site_url = "http://localhost:5173"
 # external_url = ""
 # A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
 additional_redirect_urls = ["http://localhost:5173", "http://localhost:5174", "http://127.0.0.1:5173", "http://127.0.0.1:5174"]
+
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # JWT issuer URL. If not set, defaults to auth.external_url.

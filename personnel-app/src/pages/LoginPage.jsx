@@ -101,22 +101,6 @@ export function LoginPage() {
         {error && <div className="alert alert-danger" style={{ marginBottom: '1rem', padding: '.75rem 1rem', fontSize: '.85rem' }}>{error}</div>}
         {personnelError && <div className="alert alert-danger" role="alert" style={{ marginBottom: '1rem', padding: '.75rem 1rem', fontSize: '.85rem' }}>{personnelError}</div>}
         
-        {!authLoading && !isAuthenticated && !isTestMode ? (
-          <div className="alert alert-info" role="status" style={{ marginBottom: '1rem', padding: '.75rem 1rem', fontSize: '.85rem', lineHeight: '1.6' }}>
-            An administrator must sign in on this web app before personnel start duty.{' '}
-            <Link to="/admin-login" state={{ target: 'personnel', from: '/login' }} style={{ color: '#67e8f9', fontWeight: 700, textDecoration: 'underline' }}>
-              Sign in as Admin
-            </Link> to unlock immediate personnel check-in.
-          </div>
-        ) : (
-          <div style={{ background: 'rgba(6, 182, 212, 0.1)', border: '1px solid rgba(6, 182, 212, 0.3)', borderRadius: '8px', padding: '.65rem 1rem', marginBottom: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '.5rem', color: '#67e8f9', fontSize: '.85rem', flexWrap: 'wrap' }}>
-            <span>{isTestMode ? 'Local GPS test mode is active. Database writes still require Supabase authentication.' : '✓ Admin session authorized. Personnel can proceed to duty check-in.'}</span>
-            <Link to="/admin" style={{ color: '#38bdf8', fontWeight: 700, textDecoration: 'underline', whiteSpace: 'nowrap' }}>
-              Go to Admin Portal →
-            </Link>
-          </div>
-        )}
-
         <form onSubmit={handleDutySubmit}>
           <div style={{ backgroundColor: 'rgba(15, 23, 42, 0.6)', padding: '1.25rem', borderRadius: '10px', border: '1px solid var(--border-color)', marginBottom: '1.25rem' }}>
             <h3 style={{ fontSize: '1rem', marginBottom: '.85rem', color: '#06b6d4', display: 'flex', alignItems: 'center', gap: '.4rem' }}>

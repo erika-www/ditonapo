@@ -15,18 +15,21 @@ import {
   fetchPassengerRegistry,
   createManualPassengerJourney,
   recordBoardingEvent,
-  fetchJourneyByQrToken
+  fetchJourneyByQrToken,
+  fetchCurrentBusLocation,
+  subscribeToBusLocation,
+  sendBusDirectionCommand
 } from '../services/supabaseClient';
 import { ROUTE4_STOPS, SOUTHBOUND_ROUTE4_STOPS, applyRoute4CoordinateOverrides } from '@shared/route4Stops';
 import { parsePassengerQRCode, isPriorityCategory } from '@shared/qrPassUtils';
 import { QrCameraScannerModal } from '../components/QrCameraScannerModal';
 import {
-  Users, MapPin, ArrowUp, ArrowDown, Play, Pause,
-  RotateCcw, AlertCircle, Camera, ShieldCheck, UserCheck
+  Users, MapPin, Radio, ArrowUp, ArrowDown, Play, Pause,
+  RotateCcw, Camera, ShieldCheck, UserCheck
 } from 'lucide-react';
 
 export function RouteInformationPage() {
-  const { dutySession, updateDutySession, locationPermission, requestLocationPermission, isTestMode } = useAuth();
+  const { dutySession, updateDutySession, isTestMode } = useAuth();
 
   // Current Live Time & Date Today (Hours and Minutes ONLY)
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -68,6 +71,9 @@ export function RouteInformationPage() {
   // Current stop index & Trip movement state
   const [currentStopIndex, setCurrentStopIndex] = useState(0);
   const [isTripActive, setIsTripActive] = useState(Boolean(dutySession.tripId));
+  const [busId, setBusId] = useState(dutySession.busId || null);
+  const [deviceLocation, setDeviceLocation] = useState(null);
+  const [gpsListenerStatus, setGpsListenerStatus] = useState('resolving');
   const [tripCount, setTripCount] = useState(1);
   const [statusMessage, setStatusMessage] = useState(null);
   const testRegistryKey = `qcbus_test_registry_${dutySession.tripId || 'local'}_${new Date().toISOString().slice(0, 10)}`;
@@ -80,10 +86,10 @@ export function RouteInformationPage() {
 
   // Manual Registration State
   const [showManualRegistration, setShowManualRegistration] = useState(false);
-  const [manualPassengerName, setManualPassengerName] = useState('');
   const [manualPassengerCategory, setManualPassengerCategory] = useState('Regular');
   const [manualDestination, setManualDestination] = useState('');
   const [manualRegistrationBusy, setManualRegistrationBusy] = useState(false);
+  const [lastRecordedPassengerCode, setLastRecordedPassengerCode] = useState('');
 
   // Camera QR Scanner State
   const [isCameraOpen, setIsCameraOpen] = useState(false);
@@ -116,6 +122,9 @@ export function RouteInformationPage() {
   }, [isTestMode, passengerRegistry, testRegistryKey]);
 
   const currentStop = stopsList[currentStopIndex] || stopsList[0];
+  const serviceDateCode = `${currentTime.getFullYear()}${String(currentTime.getMonth() + 1).padStart(2, '0')}${String(currentTime.getDate()).padStart(2, '0')}`;
+  const busCode = String(busId || dutySession.busId || dutySession.plateNumber || 'BUS').replace(/[^a-z0-9]/gi, '').toUpperCase();
+  const manualPassengerCode = `${serviceDateCode}-${tripCount}-${busCode}`;
   const normalizeStopName = (name) => String(name || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
   // Calculate Priority vs Regular Seat Quotas (20 Priority, 30 Regular = 50 total)
@@ -149,7 +158,7 @@ export function RouteInformationPage() {
     )).reduce((acc, curr) => acc + (Number(curr.count) || 1), 0);
   };
 
-  // Check GPS coordinates against all 15 Route 4 stops to trigger manual passenger registration popup
+  // Match GPS fixes against every stop so missed or out-of-order arrivals can recover.
   const lastTriggeredStopRef = useRef(null);
 
   const triggerArrivalAtStop = (stopIdx) => {
@@ -157,37 +166,89 @@ export function RouteInformationPage() {
     const targetStop = stopsList[stopIdx];
     setCurrentStopIndex(stopIdx);
     setShowManualRegistration(true);
+    setLastRecordedPassengerCode('');
     setManualDestination(stopsList[stopIdx + 1]?.name || '');
     setStatusMessage(`📍 Bus arrived at Stop ${stopIdx + 1} (${targetStop.name}). Manual passenger registration opened.`);
     lastTriggeredStopRef.current = targetStop.id || stopIdx;
   };
 
   useEffect(() => {
-    if (!isTripActive || !navigator.geolocation) return undefined;
-    const watchId = navigator.geolocation.watchPosition((position) => {
-      const pLat = position.coords.latitude;
-      const pLng = position.coords.longitude;
-
-      for (let i = 0; i < stopsList.length; i++) {
-        const stop = stopsList[i];
-        if (!stop.lat || !stop.lng) continue;
-        const distance = Math.hypot(
-          (pLat - stop.lat) * 111,
-          (pLng - stop.lng) * 111 * Math.cos(pLat * Math.PI / 180)
-        );
-
-        if (distance <= 0.15) {
-          if (lastTriggeredStopRef.current !== (stop.id || i)) {
-            triggerArrivalAtStop(i);
-          }
-          return;
-        }
-      }
-    }, (error) => setStatusMessage(`Waiting for bus location: ${error.message}`), {
-      enableHighAccuracy: true, maximumAge: 3000, timeout: 15000
+    if (dutySession.busId) {
+      setBusId(dutySession.busId);
+      return undefined;
+    }
+    if (!dutySession.plateNumber) {
+      setGpsListenerStatus('no-bus');
+      return undefined;
+    }
+    let active = true;
+    fetchOngoingTripForBus(dutySession.plateNumber).then((result) => {
+      if (!active) return;
+      if (result.success && result.data?.bus_id) setBusId(result.data.bus_id);
+      else setGpsListenerStatus(result.success ? 'no-trip' : 'error');
     });
-    return () => navigator.geolocation.clearWatch(watchId);
-  }, [isTripActive, currentStopIndex, stopsList]);
+    return () => { active = false; };
+  }, [dutySession.busId, dutySession.plateNumber]);
+
+  useEffect(() => {
+    if (!busId) return undefined;
+    let active = true;
+    const updateLocation = (location) => {
+      setDeviceLocation((current) => !current || Date.parse(location.updated_at) >= Date.parse(current.updated_at)
+        ? location
+        : current);
+    };
+    setGpsListenerStatus('connecting');
+    const unsubscribe = subscribeToBusLocation(busId, updateLocation, (status) => {
+      if (!active) return;
+      if (status === 'SUBSCRIBED') setGpsListenerStatus('listening');
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') setGpsListenerStatus('error');
+    });
+    fetchCurrentBusLocation(busId).then((result) => {
+      if (!active) return;
+      if (result.success && result.data) updateLocation(result.data);
+      else if (!result.success) setGpsListenerStatus('error');
+    });
+    return () => { active = false; unsubscribe(); };
+  }, [busId]);
+
+  useEffect(() => {
+    if (!isTripActive || !deviceLocation) return;
+    const pLat = Number(deviceLocation.latitude);
+    const pLng = Number(deviceLocation.longitude);
+    const packetAge = Date.now() - Date.parse(deviceLocation.updated_at);
+    if (!Number.isFinite(pLat) || !Number.isFinite(pLng) || packetAge > 30000) return;
+
+    const toRadians = (degrees) => degrees * Math.PI / 180;
+    const gpsAccuracyMeters = Number(deviceLocation.accuracy);
+    const arrivalRadiusMeters = Number.isFinite(gpsAccuracyMeters)
+      ? Math.max(250, Math.min(gpsAccuracyMeters, 300))
+      : 250;
+    let arrivalStopIndex = -1;
+    let closestDistanceMeters = Infinity;
+
+    for (let index = 0; index < stopsList.length; index += 1) {
+      const stopLat = Number(stopsList[index].lat);
+      const stopLng = Number(stopsList[index].lng);
+      if (!Number.isFinite(stopLat) || !Number.isFinite(stopLng)) continue;
+      const latDelta = toRadians(stopLat - pLat);
+      const lngDelta = toRadians(stopLng - pLng);
+      const haversine = Math.sin(latDelta / 2) ** 2
+        + Math.cos(toRadians(pLat)) * Math.cos(toRadians(stopLat)) * Math.sin(lngDelta / 2) ** 2;
+      const distanceMeters = 6371000 * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+      if (distanceMeters <= arrivalRadiusMeters && distanceMeters < closestDistanceMeters) {
+        arrivalStopIndex = index;
+        closestDistanceMeters = distanceMeters;
+      }
+    }
+
+    if (arrivalStopIndex < 0) return;
+    const arrivalStopKey = stopsList[arrivalStopIndex].id || arrivalStopIndex;
+    if (lastTriggeredStopRef.current !== arrivalStopKey) {
+      lastTriggeredStopRef.current = arrivalStopKey;
+      triggerArrivalAtStop(arrivalStopIndex);
+    }
+  }, [isTripActive, deviceLocation, stopsList]);
 
   // QR Code Processing from Camera Scanner or Gun
   const handleQrScan = async (rawCode) => {
@@ -288,10 +349,12 @@ export function RouteInformationPage() {
     localStorage.setItem(tripSegmentKey, String(segmentStartedAt));
     setTripSegmentStartedAt(segmentStartedAt);
     setPassengerRegistry([]);
+    lastTriggeredStopRef.current = null;
     setCurrentStopIndex(0);
     setIsTripActive(true);
     setTripCount((prev) => prev + 1);
     setShowManualRegistration(true);
+    setLastRecordedPassengerCode('');
     setManualDestination(stopsList[1]?.name || '');
     setStatusMessage(null);
     setStatusMessage(`Trip #${tripCount + 1} (${direction}) started at ${stopsList[0].name}.`);
@@ -300,7 +363,7 @@ export function RouteInformationPage() {
 
   const handleManualRegistration = async (event) => {
     event.preventDefault();
-    if (!manualPassengerName.trim() || !manualDestination) return;
+    if (!manualDestination) return;
     setManualRegistrationBusy(true);
 
     if (isTestMode) {
@@ -317,7 +380,7 @@ export function RouteInformationPage() {
       }
       const testPassenger = {
         id: `test-${crypto.randomUUID()}`,
-        passenger_name: manualPassengerName.trim(),
+        passenger_name: manualPassengerCode,
         passenger_category: manualPassengerCategory,
         origin_name: currentStop.name,
         destination_name: manualDestination,
@@ -326,9 +389,8 @@ export function RouteInformationPage() {
         boarded_at: new Date().toISOString()
       };
       setPassengerRegistry((rows) => [...rows, testPassenger]);
-      setStatusMessage(`Passenger boarded at ${currentStop.name}. ${Math.max(0, capacity - totalOnboard - 1)} seats available; destination: ${manualDestination}.`);
-      setManualPassengerName('');
-      setShowManualRegistration(false);
+      setLastRecordedPassengerCode(manualPassengerCode);
+      setStatusMessage(`Passenger ${manualPassengerCode} recorded at ${currentStop.name}. ${Math.max(0, capacity - totalOnboard - 1)} seats available; destination: ${manualDestination}.`);
       setManualRegistrationBusy(false);
       return;
     }
@@ -347,7 +409,8 @@ export function RouteInformationPage() {
 
     const isPri = isPriorityCategory(manualPassengerCategory);
     const created = await createManualPassengerJourney({
-      passengerName: `${manualPassengerName} (${manualPassengerCategory})`,
+      passengerName: manualPassengerCode,
+      passengerCategory: manualPassengerCategory,
       origin: currentStop.name,
       destination: manualDestination,
       tripId: activeTripId
@@ -379,24 +442,41 @@ export function RouteInformationPage() {
           boarded_at: new Date().toISOString()
         }
       ]);
+      setLastRecordedPassengerCode(manualPassengerCode);
       const remainingPriority = isPri ? Math.max(0, availablePrioritySeats - 1) : availablePrioritySeats;
       const remainingRegular = !isPri ? Math.max(0, availableRegularSeats - 1) : availableRegularSeats;
       setStatusMessage(
-        `✓ ${manualPassengerName.trim()} (${manualPassengerCategory}) boarded at ${currentStop.name}. Decremented ${isPri ? `Priority Seats (${remainingPriority}/${prioritySeatCapacity})` : `Regular Seats (${remainingRegular}/${regularSeatCapacity})`}. Destination: ${manualDestination}.`
+        `✓ Passenger ${manualPassengerCode} boarded at ${currentStop.name}. Decremented ${isPri ? `Priority Seats (${remainingPriority}/${prioritySeatCapacity})` : `Regular Seats (${remainingRegular}/${regularSeatCapacity})`}. Destination: ${manualDestination}.`
       );
-      setManualPassengerName('');
-      setShowManualRegistration(false);
     }
     setManualRegistrationBusy(false);
   };
 
-  const handleDirectionToggle = (newDir) => {
+  const handleDirectionToggle = async (newDir) => {
     lastTriggeredStopRef.current = null;
     setDirection(newDir);
     setCurrentStopIndex(0);
     setIsTripActive(false);
     updateDutySession({ tripDirection: newDir });
-    setStatusMessage(`Direction updated to ${newDir}. Click "Start Trip" to begin.`);
+    if (isTestMode) {
+      setStatusMessage(`${newDir} selected in local test mode; Raspberry Pi signal was not sent.`);
+      return;
+    }
+
+    setStatusMessage(`Sending ${newDir} signal to the Raspberry Pi…`);
+    let targetBusId = busId;
+    if (!targetBusId && dutySession.plateNumber) {
+      const ongoingTrip = await fetchOngoingTripForBus(dutySession.plateNumber);
+      targetBusId = ongoingTrip.success ? ongoingTrip.data?.bus_id : null;
+    }
+    if (!targetBusId) {
+      setStatusMessage(`Direction changed to ${newDir}, but no assigned bus was found for the Raspberry Pi signal.`);
+      return;
+    }
+    const result = await sendBusDirectionCommand(targetBusId, newDir);
+    setStatusMessage(result.success
+      ? `${newDir} signal sent to the Raspberry Pi. Click "Start Trip" to begin.`
+      : `Direction changed to ${newDir}, but the Raspberry Pi signal failed: ${result.error}`);
   };
 
   // Format Time: Hours and Minutes ONLY (e.g. "10:30 AM")
@@ -418,30 +498,6 @@ export function RouteInformationPage() {
         onScan={handleQrScan}
         title="Scan Commuter Digital QR Pass"
       />
-
-      {/* Location Permission Prompt Banner */}
-      {locationPermission === false && (
-        <div style={{
-          backgroundColor: 'rgba(239, 68, 68, 0.15)',
-          border: '1px solid #ef4444',
-          borderRadius: '8px',
-          padding: '0.5rem 1rem',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          color: '#f87171',
-          fontSize: '0.82rem',
-          flexShrink: 0
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-            <AlertCircle size={16} color="#ef4444" />
-            <span>Location permission required to pinpoint vehicle position.</span>
-          </div>
-          <button type="button" onClick={requestLocationPermission} className="btn btn-primary" style={{ padding: '0.25rem 0.6rem', fontSize: '0.75rem' }}>
-            Enable
-          </button>
-        </div>
-      )}
 
       {/* TOP METRICS BAR */}
       <div className="card" style={{ padding: '0.75rem 1rem', flexShrink: 0, backgroundColor: 'var(--bg-card)' }}>
@@ -558,6 +614,20 @@ export function RouteInformationPage() {
         </div>
       )}
 
+      <div className="card" role="status" aria-live="polite" style={{ display: 'flex', alignItems: 'center', gap: '.75rem', padding: '.65rem .9rem', flexShrink: 0 }}>
+        <Radio size={18} color={gpsListenerStatus === 'listening' && deviceLocation ? '#10b981' : '#f59e0b'} />
+        <div style={{ minWidth: 0 }}>
+          <strong style={{ fontSize: '.85rem' }}>Raspberry Pi GPS packet listener</strong>
+          <div style={{ fontSize: '.78rem', color: 'var(--text-muted)' }}>
+            {deviceLocation
+              ? `${Number(deviceLocation.latitude).toFixed(6)}, ${Number(deviceLocation.longitude).toFixed(6)} · updated ${new Date(deviceLocation.updated_at).toLocaleTimeString()}`
+              : gpsListenerStatus === 'no-bus' || gpsListenerStatus === 'no-trip'
+                ? 'No active bus assignment to listen to.'
+                : gpsListenerStatus === 'error' ? 'Listener connection failed.' : 'Listening for Pi GPS packets…'}
+          </div>
+        </div>
+      </div>
+
       {/* MANUAL PASSENGER REGISTRATION MODAL */}
       {showManualRegistration && (
         <div className="modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.78)', display: 'grid', placeItems: 'center', zIndex: 1500, padding: '1rem' }}>
@@ -569,7 +639,7 @@ export function RouteInformationPage() {
               <button type="button" onClick={() => setShowManualRegistration(false)} style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '1.25rem', padding: '0 0.25rem' }}>×</button>
             </div>
             <h2 style={{ fontSize: '1.25rem', marginTop: 0, marginBottom: '0.25rem', color: 'var(--text-main)' }}>
-              Manual Passenger Registration
+              Record Passenger
             </h2>
             <p style={{ color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1rem', lineHeight: '1.4' }}>
               Bus detected at Stop {currentStopIndex + 1}: <strong style={{ color: '#38bdf8' }}>{currentStop.name}</strong>
@@ -577,16 +647,10 @@ export function RouteInformationPage() {
               <span style={{ fontSize: '0.75rem', color: '#64748b' }}>GPS: {currentStop.lat?.toFixed(5)}, {currentStop.lng?.toFixed(5)}</span>
             </p>
 
-            <label className="form-label" htmlFor="manual-passenger-name">Passenger Name / Identifier</label>
-            <input
-              id="manual-passenger-name"
-              className="form-input"
-              placeholder="e.g. Maria Santos (Walk-in)"
-              value={manualPassengerName}
-              onChange={(e) => setManualPassengerName(e.target.value)}
-              required
-              maxLength={120}
-            />
+            <div style={{ padding: '.7rem .85rem', border: '1px solid var(--border-color)', borderRadius: '6px', background: 'var(--bg-subtle)', marginBottom: '.75rem' }}>
+              <span style={{ display: 'block', fontSize: '.72rem', color: 'var(--text-muted)', fontWeight: 700 }}>PASSENGER RECORD CODE</span>
+              <strong style={{ fontSize: '.95rem', color: '#38bdf8', fontVariantNumeric: 'tabular-nums' }}>{manualPassengerCode}</strong>
+            </div>
 
             <label className="form-label" htmlFor="manual-passenger-category" style={{ marginTop: '.75rem' }}>
               Passenger Category (Determines /20 Priority vs /30 Regular Seating)
@@ -622,15 +686,19 @@ export function RouteInformationPage() {
               ))}
             </select>
 
+            {lastRecordedPassengerCode && <p role="status" style={{ margin: '.75rem 0 0', color: '#34d399', fontSize: '.82rem' }}>
+              Recorded {lastRecordedPassengerCode}. You can record another passenger at this stop.
+            </p>}
+
             <div style={{ display: 'flex', gap: '.6rem', marginTop: '1.25rem' }}>
-              <button type="button" className="btn btn-secondary" onClick={() => setShowManualRegistration(false)}>Close / Skip</button>
+              <button type="button" className="btn btn-secondary" onClick={() => setShowManualRegistration(false)}>Done</button>
               <button
                 type="submit"
                 className="btn btn-primary"
                 style={{ flex: 1, backgroundColor: '#06b6d4', borderColor: '#06b6d4' }}
                 disabled={manualRegistrationBusy || !operationalTripId || !manualDestination}
               >
-                {manualRegistrationBusy ? 'Registering…' : 'Confirm & Board Passenger'}
+                {manualRegistrationBusy ? 'Recording…' : lastRecordedPassengerCode ? 'Record Another Passenger' : 'Record Passenger'}
               </button>
             </div>
             {!operationalTripId && <p role="alert" style={{ color: '#f87171', marginTop: '0.75rem', fontSize: '0.8rem', marginBottom: 0 }}>Notice: Trip session in offline/standby mode.</p>}

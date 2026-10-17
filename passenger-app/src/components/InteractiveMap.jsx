@@ -38,7 +38,8 @@ export function InteractiveMap({ onSelectStartStop, onShowToast, liveBusCoords, 
     const loadStops = async () => {
       const result = await fetchConfiguredRoute4Stops();
       if (!mounted) return;
-      const sourceStops = (result.success && result.data.length) ? result.data : ROUTE4_STOPS;
+      const sourceStops = [...((result.success && result.data.length) ? result.data : ROUTE4_STOPS)]
+        .sort((left, right) => Number(left.sequenceNumber ?? left.stopNumber) - Number(right.sequenceNumber ?? right.stopNumber));
       const seenNames = new Set();
       const uniqueStops = [];
       for (const st of sourceStops) {
@@ -50,8 +51,8 @@ export function InteractiveMap({ onSelectStartStop, onShowToast, liveBusCoords, 
       }
       setStopsList(uniqueStops.slice(0, 15).map((stop, idx) => ({
         ...stop,
-        stopNumber: idx + 1,
-        sequenceNumber: idx + 1,
+        stopNumber: Number(stop.sequenceNumber ?? stop.stopNumber ?? idx + 1),
+        sequenceNumber: Number(stop.sequenceNumber ?? stop.stopNumber ?? idx + 1),
         routeCode: 'R4',
         routeName: route4.name,
         routeColor: '#8b5cf6'
@@ -210,24 +211,13 @@ export function InteractiveMap({ onSelectStartStop, onShowToast, liveBusCoords, 
       const liveBusIcon = L.divIcon({
         className: 'custom-bus-marker',
         html: `
-          <div style="
-            width: 36px;
-            height: 36px;
-            background: ${busIconColor};
-            border: 3px solid #ffffff;
-            border-radius: 50%;
-            box-shadow: 0 0 16px ${isSignalLost ? 'rgba(239, 68, 68, 0.8)' : 'rgba(16, 185, 129, 0.9)'};
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-size: 15px;
-          ">
-            🚌
-          </div>
+          <span class="live-bus-position" style="--bus-position-color: ${busIconColor}">
+            <span class="live-bus-position-pulse"></span>
+            <span class="live-bus-position-dot"></span>
+          </span>
         `,
-        iconSize: [36, 36],
-        iconAnchor: [18, 18]
+        iconSize: [30, 30],
+        iconAnchor: [15, 15]
       });
 
       const busMarker = L.marker([busPos.lat, busPos.lng], { icon: liveBusIcon }).addTo(layerGroup);
@@ -243,7 +233,7 @@ export function InteractiveMap({ onSelectStartStop, onShowToast, liveBusCoords, 
 
     // 3. Numbered Stop Markers strictly (1 to 15)
     stopsList.slice(0, 15).forEach((stop, index) => {
-      const stopNum = index + 1;
+      const stopNum = Number(stop.sequenceNumber ?? stop.stopNumber ?? index + 1);
       const isNearest = nearestStopInfo && nearestStopInfo.stop.id === stop.id;
       const isFirst = stopNum === 1;
       const isInterchange = stopNum === 9;

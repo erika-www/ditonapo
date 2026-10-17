@@ -6,6 +6,7 @@ import { HomePage } from './pages/HomePage';
 import { WhereToGoPage } from './pages/WhereToGoPage';
 import { AboutPage } from './pages/AboutPage';
 import { StartTripInterface } from './components/StartTripInterface';
+import { AuthModal } from './components/AuthModal';
 import { AuthProvider, useAuth } from './context/AuthContext';
 
 export function AppContent() {
@@ -35,6 +36,7 @@ export function AppContent() {
   // Active Trip State
   const [activeTrip, setActiveTrip] = useState(null);
   const [inTripDashboard, setInTripDashboard] = useState(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
   // Toast notifications
   const [toastMessage, setToastMessage] = useState(null);
@@ -98,7 +100,7 @@ export function AppContent() {
 
   const handleOpenAuthFromNavbar = () => {
     setDashboardTab('profile');
-    setInTripDashboard(true);
+    setIsAuthModalOpen(true);
   };
 
   const handleOpenProfile = () => {
@@ -112,6 +114,10 @@ export function AppContent() {
   };
 
   const handleStartTripClick = () => {
+    if (!currentUser) {
+      setIsAuthModalOpen(true);
+      return;
+    }
     setDashboardTab('home');
     setInTripDashboard(true);
   };
@@ -124,7 +130,15 @@ export function AppContent() {
 
   return (
     <div className="app-container">
-      {/* Authentication Modal */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        onLoginSuccess={() => {
+          setIsAuthModalOpen(false);
+          setInTripDashboard(true);
+        }}
+        onLoginFailure={(message) => showToast(message, 'error')}
+      />
       {/* Navigation Header - Always visible across all views */}
       {profileError && <div role="alert" style={{ padding: '.75rem 1rem', background: '#fff7ed', color: '#9a3412', textAlign: 'center' }}>
         Signed in, but profile access failed: {profileError}{' '}

@@ -55,7 +55,7 @@ export async function fetchConfiguredRoute4Stops() {
     }
     const { data, error } = await supabase.from('stops')
       .select('id,sequence_number,name,latitude,longitude')
-      .eq('route_id', route.id).order('sequence_number');
+      .eq('route_id', route.id).order('sequence_number', { ascending: true });
     if (error) throw error;
 
     const rows = data || [];
@@ -75,8 +75,8 @@ export async function fetchConfiguredRoute4Stops() {
       success: true,
       data: source.slice(0, 15).map((stop, idx) => ({
         id: `stop-${idx + 1}`,
-        stopNumber: idx + 1,
-        sequenceNumber: idx + 1,
+        stopNumber: Number(stop.sequence_number ?? stop.stopNumber ?? idx + 1),
+        sequenceNumber: Number(stop.sequence_number ?? stop.sequenceNumber ?? idx + 1),
         name: stop.name,
         lat: Number(stop.latitude || stop.lat),
         lng: Number(stop.longitude || stop.lng)
@@ -157,29 +157,19 @@ export async function signUpWithEmail(email, password, name, category) {
       return { success: false, error: error.message };
     }
 
-    if (!data.session) {
-      const loginRes = await supabase.auth.signInWithPassword({ email, password });
-      if (!loginRes.error && loginRes.data?.user) {
-        return { success: true, user: loginRes.data.user, session: loginRes.data.session };
-      }
-    }
-
-    return { success: true, user: data.user, session: data.session };
+    return {
+      success: true,
+      user: data.user,
+      session: data.session,
+      needsEmailConfirmation: !data.session
+    };
   } catch (err) {
     return { success: false, error: err.message };
   }
 }
 
 export async function loginWithEmail(email, password) {
-  let { data, error } = await supabase.auth.signInWithPassword({ email, password });
-  
-  if (error && (error.message?.includes('Invalid login credentials') || error.message?.includes('User not found') || error.message?.includes('credentials'))) {
-    const signup = await signUpWithEmail(email, password, email.split('@')[0], 'Regular');
-    if (signup.success && signup.user) {
-      return signup;
-    }
-  }
-
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) {
     return { success: false, error: error.message };
   }

@@ -40,7 +40,7 @@ export function AuthProvider({ children }) {
           console.error('[AuthContext] getSession error:', error.message);
         }
 
-        if (currentSession?.user) {
+        if (currentSession?.user && !currentSession.user.is_anonymous) {
           if (mounted) {
             setSession(currentSession);
             setUser(currentSession.user);
@@ -48,23 +48,20 @@ export function AuthProvider({ children }) {
           }
           return;
         }
+        if (currentSession?.user?.is_anonymous) {
+          await supabase.auth.signOut();
+        }
 
-        // Testing flow: create a persistent, no-credentials Supabase identity.
-        // If anonymous sign-in is disabled for this project, use a local test
-        // identity so the passenger UI and saved QR journey remain testable.
-        const { data, error: anonymousError } = await supabase.auth.signInAnonymously();
-        if (anonymousError) throw anonymousError;
         if (mounted) {
-          setSession(data.session ?? null);
-          setUser(data.user ?? data.session?.user ?? null);
+          setSession(null);
+          setUser(null);
           setLoading(false);
         }
       } catch (err) {
         console.error('[AuthContext] initAuthSession error:', err);
         if (mounted) {
-          const localId = localStorage.getItem('qcbus_anonymous_test_id') || `local-${crypto.randomUUID()}`;
-          localStorage.setItem('qcbus_anonymous_test_id', localId);
-          setUser({ id: localId, is_anonymous: true, user_metadata: { full_name: 'Anonymous Passenger' } });
+          setSession(null);
+          setUser(null);
           setLoading(false);
         }
       }
@@ -77,12 +74,16 @@ export function AuthProvider({ children }) {
       console.log(`[AuthContext] AUTH EVENT: ${event} | USER ID: ${currentSession?.user?.id || 'NONE'}`);
 
       if (mounted) {
-        setSession(currentSession ?? null);
-        setUser(currentSession?.user ?? null);
-        if (!currentSession?.user) {
+        const authUser = currentSession?.user?.is_anonymous ? null : currentSession?.user ?? null;
+        setSession(authUser ? currentSession : null);
+        setUser(authUser);
+        if (!authUser) {
           setProfile(null);
         }
         setLoading(false);
+      }
+      if (currentSession?.user?.is_anonymous) {
+        setTimeout(() => supabase.auth.signOut(), 0);
       }
     });
 
@@ -214,9 +215,6 @@ export function AuthProvider({ children }) {
   };
 
   const signOut = async () => {
-    if (user?.is_anonymous || String(user?.id || '').startsWith('local-')) {
-      return { success: true };
-    }
     try {
       const { error } = await supabase.auth.signOut();
       if (error) throw error;

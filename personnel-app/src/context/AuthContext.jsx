@@ -61,6 +61,7 @@ const DEFAULT_DUTY = {
   busCapacity: null,
   tripDirection: 'Northbound',
   tripId: null,
+  busId: null,
   serviceDate: null,
   loginTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 };
@@ -70,29 +71,6 @@ export function AuthProvider({ children }) {
   const [token, setToken] = useState(null);
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [locationPermission, setLocationPermission] = useState(null);
-
-  // Prompt location permission
-  const requestLocationPermission = () => {
-    if (typeof navigator !== 'undefined' && navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          setLocationPermission(true);
-        },
-        (err) => {
-          console.warn('Location permission error or denied:', err);
-          setLocationPermission(false);
-        },
-        { enableHighAccuracy: true, timeout: 5000 }
-      );
-    } else {
-      setLocationPermission(true);
-    }
-  };
-
-  useEffect(() => {
-    requestLocationPermission();
-  }, []);
 
   useEffect(() => {
     let active = true;
@@ -135,7 +113,6 @@ export function AuthProvider({ children }) {
       };
       localStorage.setItem('qcbus_duty_session', JSON.stringify(testDuty));
       setDutySession(testDuty);
-      requestLocationPermission();
       return { success: true, testMode: true };
     }
 
@@ -157,13 +134,13 @@ export function AuthProvider({ children }) {
       busCapacity: tripResult.data.bus.capacity,
       tripDirection: sessionDetails.tripDirection || 'Northbound',
       tripId: tripResult.data.trip.id,
+      busId: tripResult.data.bus.id,
       serviceDate: serviceDateToday(),
       loginTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
 
     localStorage.setItem('qcbus_duty_session', JSON.stringify(newDutySession));
     setDutySession(newDutySession);
-    requestLocationPermission();
     return { success: true, trip: tripResult.data.trip };
   };
 
@@ -202,8 +179,6 @@ export function AuthProvider({ children }) {
         isDutyRegistered: dutySession.serviceDate === serviceDateToday()
           && Boolean(dutySession.plateNumber && dutySession.tripId),
         loading,
-        locationPermission,
-        requestLocationPermission,
         login,
         loginAdminAccount,
         logout,
